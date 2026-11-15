@@ -1,6 +1,13 @@
 Boundary.zip
 .env.local
 beaver_data.csv
+<<<<<<< HEAD
 stats/NASAdata
 stats_env
 stats_env/*
+=======
+NASAdata
+web_data
+__pycache__
+.vscode
+>>>>>>> 8ab444328612ad0ef156e44184149d4435f10c8c
