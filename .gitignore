@@ -1,3 +1,6 @@
 Boundary.zip
 .env.local
 beaver_data.csv
+NASAdata
+web_data
+__pycache__
