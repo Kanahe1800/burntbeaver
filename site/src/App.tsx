@@ -137,7 +137,14 @@ function App() {
   }
 
   // layers, bottom -> top: NDVI raster, burned-area outlines, animal points
-  const pointIdx = useMemo(() => (points ? Array.from(points.lat, (_, i) => i) : []), [points])
+  // only the records from the year shown on the time slider (same points for every month of that year)
+  const year = month ? Number(month.slice(0, 4)) : null
+  const pointIdx = useMemo(() => {
+    if (!points) return []
+    const idx: number[] = []
+    for (let i = 0; i < points.lat.length; i++) if (year === null || points.year[i] === year) idx.push(i)
+    return idx
+  }, [points, year])
   const layers = useMemo(() => {
     const list: Layer[] = []
     if (showNdvi && ndviFile) list.push(makeNdviLayer({ file: ndviFile, opacity: ndviOpacity, maxZoom: ndvi?.max_zoom ?? 7 }))
@@ -155,7 +162,7 @@ function App() {
         getLineColor: [255, 248, 235, 230],
         stroked: true,
         lineWidthMinPixels: 0.6,
-        updateTriggers: { getPosition: points },
+        updateTriggers: { getPosition: [points, year] },
       }))
     }
     return list
@@ -163,8 +170,8 @@ function App() {
 
   const getTooltip = useCallback((info: PickingInfo): Tooltip => {
     if (!info.layer) return null
-    if (info.layer.id === 'animals' && info.index >= 0 && points) {
-      const y = points.year[info.index]
+    if (info.layer.id === 'animals' && typeof info.object === 'number' && points) {
+      const y = points.year[info.object]
       return { text: `${capital(points.name)} record${y ? ` (${y})` : ''}` }
     }
     if (info.layer.id === 'burn' && info.object) {
@@ -213,7 +220,11 @@ function App() {
           <div className="toolbar__animal">
             <span className="toolbar__label">Animal</span>
             <span className="chip">{capital(animal)}</span>
-            <span className="toolbar__count">{points ? `${points.lat.length.toLocaleString()} records` : 'loading…'}</span>
+            <span className="toolbar__count">{points
+                ? year !== null
+                  ? `${pointIdx.length.toLocaleString()} records on the map in ${year} · ${points.lat.length.toLocaleString()} in total`
+                  : `${points.lat.length.toLocaleString()} records`
+                : 'loading…'}</span>
           </div>
           <div className="toolbar__actions">
             {uploadMsg && <span className="toolbar__msg">{uploadMsg}</span>}
@@ -235,7 +246,7 @@ function App() {
                 showBurn={showBurn} setShowBurn={setShowBurn}
                 showPoints={showPoints} setShowPoints={setShowPoints}
                 ndviOpacity={ndviOpacity} setNdviOpacity={setNdviOpacity}
-                animalName={capital(animal)}
+                animalName={year !== null ? `${capital(animal)} (${year})` : capital(animal)}
               />
               <Map defaultCenter={{ lat: 52, lng: -100 }} defaultZoom={3} gestureHandling="greedy"
                    mapTypeControl={false} streetViewControl={false}>
