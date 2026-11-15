@@ -8,3 +8,4 @@ prep/analysis_data/
 *.parquet
 *.gpkg
 *.csv
+.vscode
