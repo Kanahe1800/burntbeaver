@@ -68,10 +68,22 @@ function DatasetUpload({ onData }: { onData: (rows: BeaverRow[]) => void }) {
   }
 
   return (
-    <div className="upload-panel">
-      <div className="upload-title">Beaver data</div>
+    <div
+      style={{
+        position: 'absolute',
+        top: 10,
+        left: 10,
+        zIndex: 10,
+        background: 'white',
+        padding: '8px 10px',
+        borderRadius: 8,
+        boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+        fontSize: 13,
+        color: '#222',
+      }}
+    >
       <input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} />
-      <div className="upload-status">{status}</div>
+      <div style={{ marginTop: 4 }}>{status}</div>
     </div>
   )
 }
@@ -240,18 +252,17 @@ function App() {
   ].filter(Boolean)
   const status = error || (missing.length ? `No ${missing.join(' or ')} data for this month` : '')
 
-   return (
+  return (
     <>
-      <header className="site-header">
+      <header style={{ padding: '1rem 2rem' }}>
         <h1>Burnt Beaver</h1>
-        <p className="tagline">Beavers, vegetation and wildfire across North America</p>
       </header>
 
-      <main className="site-main">
-        <p className="intro">Some intro text above the map.</p>
+      <main style={{ maxWidth: 1000, margin: '0 auto', padding: '0 1rem' }}>
+        <p>Some intro text above the map.</p>
 
         <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}>
-          <div className="map-frame">
+          <div style={{ position: 'relative', width: '60vw', height: '70vh' }}>
             <DatasetUpload onData={setRows} />
             <LayerControls
               showNdvi={showNdvi} setShowNdvi={setShowNdvi}
@@ -273,9 +284,7 @@ function App() {
           </div>
         </APIProvider>
 
-        <p className="note">
-          Observation data like iNaturalist or GBIF reflects where people go looking, not just where beavers are.
-        </p>
+        <p>Observation data like iNaturalist or GBIF reflects where people go looking, not just where beavers are.</p>
       </main>
     </>
   )
