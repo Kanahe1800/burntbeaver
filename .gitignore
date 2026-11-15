@@ -1,3 +1,6 @@
 Boundary.zip
 .env.local
 beaver_data.csv
+stats/NASAdata
+stats_env
+stats_env/*
