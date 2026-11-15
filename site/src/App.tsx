@@ -77,8 +77,8 @@ function useStatsData() {
 // GBIF asks every user of a download to cite its DOI. Copy the citation from
 // https://www.gbif.org/occurrence/download/0011564-261023074918325 ("Cite as")
 const BEAVER_CITATION = {
-  text: 'GBIF.org (DD Month YYYY) GBIF Occurrence Download',
-  doi: 'https://doi.org/10.15468/dl.XXXXXX',
+  text: 'GBIF.org (28 October 2026) GBIF Occurrence Download',
+  doi: 'https://doi.org/10.15468/dl.9wtavz',
 }
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
