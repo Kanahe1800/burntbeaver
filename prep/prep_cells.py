@@ -15,7 +15,10 @@ Output, per cell size:   analysis_data/<size>km/
   grid.gpkg            cell polygons + static columns (for maps in the notebook / QGIS)
   cells.parquet        one row per cell: cell_id, row, col, lon, lat, land_km2, land_frac
   panel.parquet        one row per cell x month: cell_id, month, ndvi_mean, ndvi_valid_frac,
-                       burned_km2, burned_frac, first_burn_doy, unmapped_frac  + the cells columns
+                       burned_km2, burned_frac, first_burn_doy, unmapped_frac
+                       (join cells.parquet on cell_id for lon/lat/land; kept separate to save memory)
+  _cache/              per-month results; a rerun (e.g. after a crash or adding files) only processes
+                       new files. Delete it to force a full recompute.
   meta.json            grid definition (CRS, origin, size, width, height) -> used by animal_cells.py
                        and the web app to put any animal's points into the same cells
 
@@ -43,14 +46,17 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import rasterio
+import rasterio.errors
 from pyproj import Transformer
 from rasterio import features
 from rasterio.transform import from_origin
 from rasterio.windows import Window
 from shapely.geometry import box
 
-from prep_common import find_files
+from prep_common import find_files, parse_months
 
 CRS = "ESRI:102008"           # North America Albers Equal Area Conic
 FINE = 1000                   # land-area raster resolution (m)
@@ -226,67 +232,127 @@ def burn_month(path, grids):
 
 
 # ----------------------------------------------------------------------------- main
-def run(inputs, land, sizes_km, out):
+def _cache_path(cache_dir, kind, path, grids):
+    """One cache file per input file + grid set; changes if the file or the grids change."""
+    st = Path(path).stat()
+    g0 = next(iter(grids.values()))
+    key = f"{g0.minx:.0f}_{g0.top:.0f}_{'-'.join(str(s) for s in grids)}_{st.st_size}"
+    return cache_dir / f"{kind}_{Path(path).stem}_{key}.npz"
+
+
+def _ndvi_cached(binner, path, land_km2, grids, cache_dir):
+    cp = _cache_path(cache_dir, "ndvi", path, grids)
+    if cp.exists():
+        z = np.load(cp)
+        return {s: (z[f"mean_{s}"], z[f"frac_{s}"]) for s in grids}, True
+    res = binner.month(path, land_km2)
+    np.savez_compressed(cp, **{f"mean_{s}": res[s][0].astype(np.float32) for s in grids},
+                        **{f"frac_{s}": res[s][1].astype(np.float32) for s in grids})
+    return res, False
+
+
+def _burn_cached(path, grids, cache_dir):
+    cp = _cache_path(cache_dir, "burn", path, grids)
+    if cp.exists():
+        z = np.load(cp)
+        return {s: (z[f"burned_{s}"], z[f"first_{s}"], z[f"unm_{s}"]) for s in grids}, float(z["total"]), True
+    res, total = burn_month(path, grids)
+    np.savez_compressed(cp, total=total,
+                        **{f"burned_{s}": res[s][0].astype(np.float32) for s in grids},
+                        **{f"first_{s}": res[s][1].astype(np.float32) for s in grids},
+                        **{f"unm_{s}": res[s][2].astype(np.float32) for s in grids})
+    return res, total, False
+
+
+PANEL_SCHEMA = pa.schema([
+    ("cell_id", pa.int32()), ("month", pa.string()),
+    ("ndvi_mean", pa.float32()), ("ndvi_valid_frac", pa.float32()),
+    ("burned_km2", pa.float32()), ("burned_frac", pa.float32()),
+    ("first_burn_doy", pa.float32()), ("unmapped_frac", pa.float32()),
+])
+
+
+def run(inputs, land, sizes_km, out, months=None):
     grids, land_km2, cells = build_grids(land, sizes_km)
     out = Path(out)
+    cache_dir = out / "_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    ndvi_files = find_files(inputs, "ndvi")
-    burn_files = find_files(inputs, "burn")
+    ndvi_files = dict((f"{d:%Y-%m}", p) for p, d in find_files(inputs, "ndvi", months))
+    burn_files = dict((f"{d:%Y-%m}", p) for p, d in find_files(inputs, "burn", months))
     print(f"Found {len(ndvi_files)} NDVI and {len(burn_files)} Burn Date file(s)")
     if not ndvi_files and not burn_files:
         raise SystemExit("No MOD13A3 NDVI or MCD64A1 Burn_Date files found.")
 
-    ndvi, burn = {}, {}
-    binner = NdviBinner(grids)
-    for path, date in ndvi_files:
-        m = f"{date:%Y-%m}"
-        ndvi[m] = binner.month(path, land_km2)
-        print(f"  NDVI {m}: done")
-    for path, date in burn_files:
-        m = f"{date:%Y-%m}"
-        burn[m], total = burn_month(path, grids)
-        print(f"  Burned area {m}: {total:,.0f} km2")
-
-    months = sorted(set(ndvi) | set(burn))
-    for s, g in grids.items():
+    # one panel file per grid, written month by month (keeps memory low for many years at 10 km)
+    writers, dirs, ids, land = {}, {}, {}, {}
+    for s in grids:
         d = out / f"{s // 1000}km"
         d.mkdir(parents=True, exist_ok=True)
-        c = cells[s].copy()
-        ids = c["cell_id"].values
+        dirs[s] = d
+        ids[s] = cells[s]["cell_id"].values
+        land[s] = cells[s]["land_km2"].values.astype(np.float32)
+        writers[s] = pq.ParquetWriter(d / "panel.parquet.tmp", PANEL_SCHEMA, compression="zstd")
 
-        rows = []
-        for m in months:
-            part = pd.DataFrame({"cell_id": ids, "month": m})
-            if m in ndvi:
-                mean, frac = ndvi[m][s]
-                part["ndvi_mean"] = np.round(mean[ids], 4)
-                part["ndvi_valid_frac"] = np.round(frac[ids], 3)
-            else:
-                part["ndvi_mean"] = np.nan
-                part["ndvi_valid_frac"] = np.nan
-            if m in burn:
-                burned, first, unm = burn[m][s]
-                part["burned_km2"] = np.round(burned[ids], 3)
-                part["burned_frac"] = np.round(burned[ids] / c["land_km2"].values, 5)
-                part["first_burn_doy"] = first[ids]
-                part["unmapped_frac"] = np.round(unm[ids], 3)
-            else:                                    # no burned-area data this month -> unknown
-                for col in ("burned_km2", "burned_frac", "first_burn_doy", "unmapped_frac"):
-                    part[col] = np.nan
-            rows.append(part)
-        panel = pd.concat(rows, ignore_index=True).merge(c, on="cell_id", how="left")
+    binner = NdviBinner(grids)
+    done_ndvi, done_burn = [], []
+    nan = lambda n: np.full(n, np.nan, np.float32)
+    try:
+        for m in sorted(set(ndvi_files) | set(burn_files)):
+            ndvi = burn = None
+            if m in ndvi_files:
+                try:
+                    ndvi, cached = _ndvi_cached(binner, ndvi_files[m], land_km2, grids, cache_dir)
+                    done_ndvi.append(m)
+                    print(f"  NDVI {m}: {'cached' if cached else 'done'}")
+                except (rasterio.errors.RasterioIOError, OSError) as e:
+                    print(f"  ! NDVI {m}: could not read ({e}); skipped")
+            if m in burn_files:
+                try:
+                    burn, total, cached = _burn_cached(burn_files[m], grids, cache_dir)
+                    done_burn.append(m)
+                    print(f"  Burned area {m}: {total:,.0f} km2{' (cached)' if cached else ''}")
+                except (rasterio.errors.RasterioIOError, OSError) as e:
+                    print(f"  ! Burned area {m}: could not read ({e}); skipped")
+            if ndvi is None and burn is None:
+                continue
+            for s in grids:
+                i, n = ids[s], len(ids[s])
+                cols = {"cell_id": i.astype(np.int32), "month": np.full(n, m, dtype=object)}
+                if ndvi is not None:
+                    cols["ndvi_mean"] = np.round(ndvi[s][0][i], 4).astype(np.float32)
+                    cols["ndvi_valid_frac"] = np.round(ndvi[s][1][i], 3).astype(np.float32)
+                else:
+                    cols["ndvi_mean"] = cols["ndvi_valid_frac"] = nan(n)
+                if burn is not None:                       # no file this month -> NaN (unknown), not 0
+                    b = burn[s][0][i].astype(np.float32)
+                    cols["burned_km2"] = np.round(b, 3)
+                    cols["burned_frac"] = np.round(b / land[s], 5)
+                    cols["first_burn_doy"] = burn[s][1][i].astype(np.float32)
+                    cols["unmapped_frac"] = np.round(burn[s][2][i], 3).astype(np.float32)
+                else:
+                    for c in ("burned_km2", "burned_frac", "first_burn_doy", "unmapped_frac"):
+                        cols[c] = nan(n)
+                writers[s].write_table(pa.table(cols, schema=PANEL_SCHEMA))
+    finally:
+        for w in writers.values():
+            w.close()
 
+    months_all = sorted(set(done_ndvi) | set(done_burn))
+    for s, g in grids.items():
+        d, c = dirs[s], cells[s]
+        (d / "panel.parquet.tmp").replace(d / "panel.parquet")
         c.to_parquet(d / "cells.parquet", index=False)
-        panel.to_parquet(d / "panel.parquet", index=False)
         geo = gpd.GeoDataFrame(
             c, crs=CRS,
             geometry=[box(g.minx + col * s, g.top - (row + 1) * s, g.minx + (col + 1) * s, g.top - row * s)
                       for row, col in zip(c["row"], c["col"])])
         geo.to_file(d / "grid.gpkg", driver="GPKG")
-        meta = g.meta() | {"months": months,
-                           "ndvi_months": sorted(ndvi), "burn_months": sorted(burn)}
+        meta = g.meta() | {"months": months_all, "ndvi_months": sorted(done_ndvi), "burn_months": sorted(done_burn)}
         (d / "meta.json").write_text(json.dumps(meta, indent=2))
-        print(f"{s // 1000} km: wrote {d}  ({len(c):,} cells, {len(panel):,} panel rows)")
+        print(f"{s // 1000} km: wrote {d}  ({len(c):,} cells x {len(months_all)} months "
+              f"= {len(c) * len(months_all):,} panel rows)")
+    print(f"Cache: {cache_dir} (delete it to force a full recompute)")
 
 
 def main():
@@ -295,8 +361,10 @@ def main():
     ap.add_argument("--land", required=True, help="land polygons (GeoJSON/GPKG/shapefile), e.g. NA.geojson")
     ap.add_argument("--cell-size", type=float, nargs="+", default=[50], help="cell size(s) in km (default 50)")
     ap.add_argument("--out", default="analysis_data", help="output folder (default analysis_data)")
+    ap.add_argument("--months", type=parse_months, default=None,
+                    help="only use these months, e.g. 4-10 (April-October) or 5,6,7 (default: all)")
     a = ap.parse_args()
-    run(a.inputs, a.land, a.cell_size, a.out)
+    run(a.inputs, a.land, a.cell_size, a.out, a.months)
 
 
 if __name__ == "__main__":

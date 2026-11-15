@@ -87,7 +87,7 @@ def process(src_path, date, out_path, bbox, zoom, resampling):
 
 
 def run(inputs, out="cog_out", region="north_america", bbox=None, zoom=7,
-        resampling="bilinear", overwrite=False):
+        resampling="bilinear", overwrite=False, months=None):
     bbox = resolve_bbox(region, bbox)
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +99,7 @@ def run(inputs, out="cog_out", region="north_america", bbox=None, zoom=7,
     settings = {"bounds_lonlat": bounds, "max_zoom": zoom}
     entries = {} if overwrite else load_manifest(manifest_path, settings)
 
-    files = find_files(inputs, "ndvi")
+    files = find_files(inputs, "ndvi", months)
     print(f"NDVI: found {len(files)} matching file(s); region {bbox}, zoom {zoom}")
     done = skipped = 0
     for path, date in files:
@@ -134,7 +134,7 @@ def main():
                          "(good match for 1 km MODIS). Use 9 for 250 m data.")
     ap.add_argument("--resampling", choices=["nearest", "bilinear"], default="bilinear")
     a = ap.parse_args()
-    run(a.inputs, a.out, a.region, a.bbox, a.zoom, a.resampling, a.overwrite)
+    run(a.inputs, a.out, a.region, a.bbox, a.zoom, a.resampling, a.overwrite, a.months)
 
 
 if __name__ == "__main__":
