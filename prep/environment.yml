@@ -1,0 +1,7 @@
+name: smokey-creatures
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - rasterio
+      - numpy
