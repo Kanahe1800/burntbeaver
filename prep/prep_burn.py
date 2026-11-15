@@ -161,7 +161,7 @@ def process(src_path, month_start, out_path, bbox, simplify_m, min_area_km2, min
 
 
 def run(inputs, out="burn_out", region="north_america", bbox=None, simplify=250.0,
-        min_area=0.0, min_hole=1.0, overwrite=False):
+        min_area=0.0, min_hole=1.0, overwrite=False, months=None):
     bbox = resolve_bbox(region, bbox)
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -171,7 +171,7 @@ def run(inputs, out="burn_out", region="north_america", bbox=None, simplify=250.
                 "min_hole_km2": min_hole}
     entries = {} if overwrite else load_manifest(manifest_path, settings)
 
-    files = find_files(inputs, "burn")
+    files = find_files(inputs, "burn", months)
     print(f"Burned area: found {len(files)} matching file(s); region {bbox}, simplify {simplify} m")
     done = skipped = 0
     for path, month_start in files:
@@ -202,7 +202,7 @@ def main():
     ap.add_argument("--min-hole", type=float, default=1.0,
                     help="fill unburned holes smaller than this many km2 inside a fire (default 1)")
     a = ap.parse_args()
-    run(a.inputs, a.out, a.region, a.bbox, a.simplify, a.min_area, a.min_hole, a.overwrite)
+    run(a.inputs, a.out, a.region, a.bbox, a.simplify, a.min_area, a.min_hole, a.overwrite, a.months)
 
 
 if __name__ == "__main__":

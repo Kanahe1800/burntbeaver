@@ -60,7 +60,7 @@ Columns are detected automatically (`decimalLatitude`/`latitude`/`lat`, `year` o
 ## 3. Web map data — `prep_all.py`
 
 ```powershell
-python prep_all.py ..\NASAdata --out web_data --region north_america
+python prep_all.py ..\NASAdata --out web_data --region us_canada --zoom 6 --months 4-10
 ```
 
 | Output | What | Where it goes |
@@ -69,7 +69,11 @@ python prep_all.py ..\NASAdata --out web_data --region north_america
 | `web_data/burn/burn_YYYY_MM.geojson` + `burn_manifest.json` | Burned-area outlines per month (area km², start/end dates) | R2 bucket `burn/` |
 
 - Run again when new files arrive: only **new months** are processed, manifests are updated.
-- Use the **same `--region`** every time (`north_america`, `canada`, `western_canada`, `bc`, or `--bbox W S E N`).
+- `--months 4-10` processes only April–October (the folder can hold all 12 months; others are skipped).
+  Other forms: `--months 5,6,7`, `--months 11-2` (wraps over New Year). Leave it out for all months.
+- `--zoom 6` (~2.4 km pixels) makes each NDVI month ~21 MB instead of ~83 MB for US + Canada
+  (April–October × 10 years ≈ 1.5 GB on R2). Use `--zoom 7` for full 1 km detail on smaller regions.
+- Use the **same `--region`** every time (`us_canada`, `north_america`, `canada`, `western_canada`, `bc`, or `--bbox W S E N`).
   Changing it stops with a message; add `--overwrite` to rebuild everything.
 - Options: `--simplify 500` (smoother outlines), `--min-area 1` (drop fires < 1 km²).
 - The two steps can also run alone: `prep_ndvi.py`, `prep_burn.py` (same options).
@@ -85,22 +89,27 @@ Upload: R2 bucket `smoky-data` → folders `ndvi/` and `burn/`
 ### 4a. Environment per grid cell (run once per data update)
 
 ```powershell
-python prep_cells.py ..\NASAdata --land ..\site\public\geo_files\NA.geojson --cell-size 10 25 50 --out analysis_data
+python prep_cells.py ..\NASAdata --land ..\site\public\geo_files\NA.geojson --cell-size 10 25 50 --out analysis_data --months 4-10
 ```
 
+- `--months 4-10` uses only the growing season (winter NDVI is mostly snow). Same format as above.
 - Equal-area square grid in **North America Albers (ESRI:102008)**, several sizes in one run.
   Grids share an origin, so one 50 km cell = exactly 25 cells of 10 km.
 - Reads the **raw** AppEEARS files (not `web_data`).
 - Each NDVI / burn pixel is assigned to the cell its **centre** falls in (exact).
   We do *not* use GDAL `reproject(..., average)`: MODIS Sinusoidal is strongly sheared far from its
   central meridian (e.g. BC), and that averaging picks the wrong pixels (errors up to ~0.09 NDVI).
-- Runtime ~1–3 min for 7 NDVI + 2 burn months, ~2 GB RAM.
+- Runtime: roughly 30 s per NDVI month and 10 s per burn month (10 years Apr–Oct ≈ 1 hour), ~2 GB RAM.
+- **Cache:** each month's result is saved in `analysis_data/_cache/`. A rerun (after a crash, or after adding
+  new files) only processes what is new. Delete `_cache/` to force a full recompute.
+- Duplicate downloads like `name (1).tif` are detected; the original name is used.
+- Files tagged as **synthetic sample data** are skipped automatically.
 
 Output per size, `analysis_data/<size>km/`:
 
 | File | One row per | Columns |
 |---|---|---|
-| `panel.parquet` | cell × month | `ndvi_mean`, `ndvi_valid_frac`, `burned_km2`, `burned_frac`, `first_burn_doy`, `unmapped_frac` + cell columns |
+| `panel.parquet` | cell × month | `ndvi_mean`, `ndvi_valid_frac`, `burned_km2`, `burned_frac`, `first_burn_doy`, `unmapped_frac` (join `cells.parquet` on `cell_id` for location/land) |
 | `cells.parquet` | cell | `cell_id`, `row`, `col`, `lon`, `lat`, `land_km2`, `land_frac` |
 | `grid.gpkg` | cell | polygons for maps (notebook / QGIS) |
 | `meta.json` | — | grid definition: CRS, origin, cell size, width/height, months |
@@ -147,11 +156,13 @@ elk = count_animals("elk.csv", "analysis_data/50km/meta.json", start_year=2015)
 ## 5. Statistics — `stats_cells.ipynb`
 
 Open in VS Code / Jupyter from the `prep/` folder and run all cells. Settings at the top:
-`GRID` (main grid), `ANIMAL` (label used in 4b), `PRE_MONTH` / `POST_MONTH`, filters.
+`GRID` (main grid), `ANIMAL` (label used in 4b), **`YEAR`** (fire season to analyse; fires April–July,
+NDVI change = August of `YEAR` vs August of the year before), filters.
+Run it for several years (e.g. 2017, 2018, 2021, 2023) and compare.
 
 | Section | What |
 |---|---|
-| 1 | One row per cell: burned share in fire months, NDVI before/after, beaver presence. NDVI change is compared with unburned cells at the same latitude (removes normal autumn browning). |
+| 1 | One row per cell: burned share in the fire months of `YEAR`, August NDVI before/after, beaver presence. NDVI change is compared with unburned cells at the same latitude (removes year-to-year weather differences). |
 | 2 | Maps: NDVI, burned share, beaver records |
 | 3a | Spearman correlation, beaver records vs burned share |
 | 3b | Two-part model: *did the cell burn?* (logistic, odds ratios) and *how much burned?* (burned cells), controlling for NDVI, latitude, longitude |
@@ -161,6 +172,24 @@ Open in VS Code / Jupyter from the `prep/` folder and run all cells. Settings at
 | 6 | Same analysis at 10 / 25 / 50 km |
 | 7 | NDVI timelapse GIF per cell |
 | 8 | How to report the results |
+
+Sections 6–9 are **robustness checks**: the odds ratio within 500 km regions, in surveyed areas only (a beaver record
+within 100 km), at 10/25/50 km, and for several fire seasons (2017, 2018, 2021, 2023, plus pooled). Section 9 puts them
+all in one chart.
+
+## 5b. Recovery — `recovery_cells.ipynb`
+
+Same input tables, no extra preprocessing. For every cell whose first big fire (≥ 10 % burned) was in 2017–2023, follows
+August NDVI in the following years and measures how much of the fire's NDVI drop has come back (recovery ratio,
+climate-adjusted with never-burned cells at the same latitude). Main grid 25 km.
+
+| Section | What |
+|---|---|
+| 2 | fires/cells used (table + map) |
+| 3 | recovery curves, beaver vs no beaver records, bootstrap bands by region |
+| 4 | Kaplan–Meier "share not yet 90 % recovered", log-rank test, Cox hazard ratio (> 1 = faster), within region and surveyed |
+| 5 | extra recovery per year in beaver cells (`k:beaver_present`) |
+| 6 | 10 / 25 / 50 km |
 
 ### Interpreting — please read
 
@@ -173,7 +202,7 @@ Open in VS Code / Jupyter from the `prep/` folder and run all cells. Settings at
   (e.g. `ndvi_pre >= 0.5` or a land-cover layer) and to regions where beavers and wildfire both occur.
 - Beaver effects are very local (Fairfax & Whittle 2020: riparian strips). At 10–50 km with 1 km NDVI the
   signal may be weak; "no clear landscape-scale effect" is a valid result.
-- Recovery after fire needs post-fire years; with one season we can only test resistance.
+- The notebook tests resistance within one season; recovery over the following years is a separate analysis (the 10-year panel supports it).
 
 Reference: Fairfax, E. & Whittle, A. (2020). Smokey the Beaver: beaver-dammed riparian corridors stay green
 during wildfire throughout the western USA. *Ecological Applications* 30(8): e02225.
@@ -190,7 +219,8 @@ during wildfire throughout the western USA. *Ecological Applications* 30(8): e02
 | `prep_all.py` | runs both web steps |
 | `prep_cells.py` | NDVI + burned area → per-cell analysis tables |
 | `animal_cells.py` | any occurrence CSV → per-cell counts (team GBIF cleaning built in) |
-| `stats_cells.ipynb` | statistics notebook |
+| `stats_cells.ipynb` | fire statistics notebook (+ robustness checks) |
+| `recovery_cells.ipynb` | post-fire recovery notebook |
 | `environment.yml` | Python environment |
 
 ## 7. Git

@@ -2,6 +2,7 @@
 Process a whole AppEEARS download folder in one go: NDVI (MOD13A3) and burned area (MCD64A1).
 
   python prep_all.py data/ --out web_data --region north_america
+  python prep_all.py data/ --out web_data --region us_canada --zoom 6 --months 4-10
 
 Searches data/ and its subfolders, picks out the NDVI and Burn Date files by name, ignores
 everything else, and only processes files that are new since the last run. Output:
@@ -29,9 +30,10 @@ def main():
     a = ap.parse_args()
 
     out = Path(a.out)
-    prep_ndvi.run(a.inputs, out / "ndvi", a.region, a.bbox, a.zoom, overwrite=a.overwrite)
+    prep_ndvi.run(a.inputs, out / "ndvi", a.region, a.bbox, a.zoom, overwrite=a.overwrite, months=a.months)
     print()
-    prep_burn.run(a.inputs, out / "burn", a.region, a.bbox, a.simplify, a.min_area, overwrite=a.overwrite)
+    prep_burn.run(a.inputs, out / "burn", a.region, a.bbox, a.simplify, a.min_area,
+                  overwrite=a.overwrite, months=a.months)
 
 
 if __name__ == "__main__":

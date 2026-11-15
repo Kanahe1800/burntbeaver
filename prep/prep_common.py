@@ -8,6 +8,7 @@ from pathlib import Path
 REGIONS = {  # west, south, east, north (degrees)
     "north_america": (-170.0, 15.0, -50.0, 72.0),
     "canada": (-141.0, 41.6, -52.6, 72.0),
+    "us_canada": (-170.0, 24.0, -52.0, 72.0),   
     "western_canada": (-139.1, 48.2, -101.9, 70.0),
     "bc": (-139.1, 48.2, -114.0, 60.0),
 }
@@ -22,10 +23,11 @@ PATTERNS = {
 }
 
 
-def find_files(inputs, kind):
+def find_files(inputs, kind, months=None):
     """Return [(path, date)] for every file matching `kind` in the given files/folders.
 
     Folders are searched recursively; files that don't match the naming pattern are skipped.
+    `months`: set of month numbers to keep (e.g. {4,...,10}); None keeps all.
     """
     pattern = PATTERNS[kind]
     candidates = []
@@ -38,14 +40,26 @@ def find_files(inputs, kind):
             print(f"  ! not found: {p}")
 
     found = {}
+    skipped_months = 0
     for f in candidates:
         m = pattern.search(f.name)
         if m:
             date = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            if months is not None and date.month not in months:
+                skipped_months += 1
+                continue
             if date in found:
-                print(f"  ! duplicate date {date}: using {found[date].name}, skipping {f.name}")
+                keep, drop = sorted([found[date], f], key=_copy_rank)
+                print(f"  ! duplicate date {date}: using {keep.name}, skipping {drop.name}")
+                found[date] = keep
                 continue
             found[date] = f
+    for date, f in list(found.items()):
+        if _is_synthetic(f):
+            print(f"  ! {f.name} is SYNTHETIC sample data: skipped")
+            del found[date]
+    if skipped_months:
+        print(f"  ({skipped_months} {kind} file(s) outside the selected months ignored)")
     return sorted(((path, date) for date, path in found.items()), key=lambda x: x[1])
 
 
@@ -87,3 +101,5 @@ def add_common_args(ap, default_out):
                     help="custom lon/lat box; overrides --region")
     ap.add_argument("--overwrite", action="store_true",
                     help="reprocess files whose output already exists (default: skip them)")
+    ap.add_argument("--months", type=parse_months, default=None,
+                    help="only process these months, e.g. 4-10 (April-October) or 5,6,7 (default: all)")
