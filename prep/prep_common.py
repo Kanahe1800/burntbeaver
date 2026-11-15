@@ -7,6 +7,21 @@ from pathlib import Path
 
 REGIONS = {  # west, south, east, north (degrees)
     "north_america": (-170.0, 15.0, -50.0, 72.0),
+    "canada": (-141.0, 41.6, -52.6, 72.0),
+    "western_canada": (-139.1, 48.2, -101.9, 70.0),
+    "bc": (-139.1, 48.2, -114.0, 60.0),
+}
+
+# AppEEARS names, e.g.
+#   MOD13A3.061__1_km_monthly_NDVI_20260401T000000_aid0001.tif   (also MOD13A3_061_...)
+#   MCD64A1.061_Burn_Date_20260701T000000_aid0001.tif
+PATTERNS = {
+    "ndvi": re.compile(r"MOD13A3[._]061.*NDVI_(\d{4})(\d{2})(\d{2})T\d{6}.*\.tiff?$", re.I),
+    # Burn_Date only (Burn_Date_Uncertainty / QA / First_Day / Last_Day don't match)
+    "burn": re.compile(r"MCD64A1[._]061.*Burn_Date_(\d{4})(\d{2})(\d{2})T\d{6}.*\.tiff?$", re.I),
+}
+
+
 def find_files(inputs, kind):
     """Return [(path, date)] for every file matching `kind` in the given files/folders.
 
