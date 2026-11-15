@@ -9,12 +9,11 @@ import { GoogleMapsOverlay } from '@deck.gl/google-maps'
 import { ScatterplotLayer } from '@deck.gl/layers'
 
 import LayerControls from './LayerControls'
-import type { Background } from './LayerControls'
 import {
-  NDVI_MANIFEST_URL, FIRE_MANIFEST_URL,
-  makeNdviLayer, ndviFromPick, loadFirePoints, makeFireLayer, FIRE_CONF_LABEL,
+  NDVI_MANIFEST_URL, BURN_MANIFEST_URL,
+  makeNdviLayer, ndviFromPick, loadBurn, makeBurnLayer,
 } from './dataLayers'
-import type { NdviManifest, FireManifest, FirePoint } from './dataLayers'
+import type { NdviManifest, BurnManifest, BurnProps } from './dataLayers'
 
 
 export interface BeaverRow {
@@ -145,10 +144,10 @@ function DeckOverlay({ layers, getTooltip }: { layers: Layer[]; getTooltip: (inf
 }
 
 
-// Load the NDVI + fire manifests and build a combined, sorted list of months
+// Load the NDVI + burned-area manifests and build a combined, sorted list of months
 function useManifests() {
   const [ndvi, setNdvi] = useState<NdviManifest | null>(null)
-  const [fire, setFire] = useState<FireManifest | null>(null)
+  const [burn, setBurn] = useState<BurnManifest | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -160,30 +159,31 @@ function useManifests() {
     get<NdviManifest>(NDVI_MANIFEST_URL)
       .then(setNdvi)
       .catch((e) => { console.error(e); setError('NDVI data not available') })
-    get<FireManifest>(FIRE_MANIFEST_URL)
-      .then(setFire)
-      .catch((e) => { console.error(e); setError((s) => s || 'Fire data not available') })
+    get<BurnManifest>(BURN_MANIFEST_URL)
+      .then(setBurn)
+      .catch((e) => { console.error(e); setError((s) => s || 'Burned-area data not available') })
   }, [])
 
   const months = useMemo(() => {
     const set = new Set<string>()
     ndvi?.files.forEach((f) => set.add(f.date)) // "2026-06"
-    fire?.files.forEach((f) => set.add(f.start.slice(0, 7))) // "2026-07-20" -> "2026-07"
+    burn?.files.forEach((f) => set.add(f.month)) // "2026-07"
     return [...set].sort()
-  }, [ndvi, fire])
+  }, [ndvi, burn])
 
-  return { ndvi, fire, months, error }
+  return { ndvi, burn, months, error }
 }
 
 
 function App() {
   const [rows, setRows] = useState<BeaverRow[]>([])
-  const [background, setBackground] = useState<Background>('ndvi')
+  const [showNdvi, setShowNdvi] = useState(true)
+  const [showBurn, setShowBurn] = useState(true)
   const [monthIndex, setMonthIndex] = useState(0)
-  const [opacity, setOpacity] = useState(0.8)
-  const [firePoints, setFirePoints] = useState<FirePoint[]>([])
+  const [ndviOpacity, setNdviOpacity] = useState(0.8)
+  const [burnData, setBurnData] = useState<Awaited<ReturnType<typeof loadBurn>> | null>(null)
 
-  const { ndvi, fire, months, error } = useManifests()
+  const { ndvi, burn, months, error } = useManifests()
   const month: string | undefined = months[monthIndex]
 
   // start on the latest month once the manifests arrive
@@ -191,29 +191,26 @@ function App() {
 
   // files for the selected month
   const ndviFile = ndvi?.files.find((f) => f.date === month)?.file
-  const fireFiles = useMemo(
-    () => (fire?.files ?? []).filter((f) => month && f.start.startsWith(month)).map((f) => f.file),
-    [fire, month],
-  )
+  const burnFile = burn?.files.find((f) => f.month === month)?.file
 
-  // load fire points when the fire background is on (all 8-day composites in the month)
+  // load that month's burned-area outlines
   useEffect(() => {
-    if (background !== 'fire' || fireFiles.length === 0) { setFirePoints([]); return }
+    if (!showBurn || !burnFile) { setBurnData(null); return }
     let cancelled = false
-    loadFirePoints(fireFiles)
-      .then((pts) => { if (!cancelled) setFirePoints(pts) })
+    loadBurn(burnFile)
+      .then((d) => { if (!cancelled) setBurnData(d) })
       .catch((e) => console.error(e))
     return () => { cancelled = true }
-  }, [background, fireFiles])
+  }, [showBurn, burnFile])
 
-  // layers, bottom -> top: background (NDVI or fire), then beavers
+  // layers, bottom -> top: NDVI raster, burned-area outlines, beaver points
   const layers = useMemo(() => {
     const list: Layer[] = []
-    if (background === 'ndvi' && ndviFile) {
-      list.push(makeNdviLayer({ file: ndviFile, opacity, maxZoom: ndvi?.max_zoom ?? 7 }))
+    if (showNdvi && ndviFile) {
+      list.push(makeNdviLayer({ file: ndviFile, opacity: ndviOpacity, maxZoom: ndvi?.max_zoom ?? 7 }))
     }
-    if (background === 'fire' && firePoints.length) {
-      list.push(makeFireLayer({ points: firePoints, opacity }))
+    if (showBurn && burnData) {
+      list.push(makeBurnLayer({ data: burnData }))
     }
     list.push(new ScatterplotLayer<BeaverRow>({
       id: 'beavers',
@@ -228,18 +225,19 @@ function App() {
       lineWidthMinPixels: 0.5,
     }))
     return list
-  }, [background, ndviFile, ndvi, firePoints, opacity, rows])
+  }, [showNdvi, ndviFile, ndvi, ndviOpacity, showBurn, burnData, rows])
 
-  // hover text for whatever is under the cursor
+  // hover text for whatever is under the cursor (top layer wins)
   const getTooltip = useCallback((info: PickingInfo): Tooltip => {
     if (!info.layer) return null
     if (info.layer.id === 'beavers' && info.object) {
       const d = info.object as BeaverRow
       return { text: `Beaver record${d.year ? ` (${d.year})` : ''}` }
     }
-    if (info.layer.id === 'fire' && info.object) {
-      const d = info.object as FirePoint
-      return { text: `Fire ${d.start} – ${d.end}\nconfidence: ${FIRE_CONF_LABEL[d.conf] ?? d.conf}` }
+    if (info.layer.id === 'burn' && info.object) {
+      const p = (info.object as { properties: BurnProps }).properties
+      const dates = p.start === p.end ? p.start : `${p.start} – ${p.end}`
+      return { text: `Burned ${dates}\n${p.area_km2.toLocaleString()} km²` }
     }
     if (info.layer.id.startsWith('ndvi')) {
       const v = ndviFromPick(info)
@@ -248,10 +246,11 @@ function App() {
     return null
   }, [])
 
-  const noDataForMonth =
-    month && ((background === 'ndvi' && !ndviFile) || (background === 'fire' && fireFiles.length === 0))
-      ? `No ${background === 'ndvi' ? 'NDVI' : 'fire'} data for this month`
-      : ''
+  const missing = [
+    showNdvi && month && !ndviFile ? 'NDVI' : '',
+    showBurn && month && !burnFile ? 'burned area' : '',
+  ].filter(Boolean)
+  const status = error || (missing.length ? `No ${missing.join(' or ')} data for this month` : '')
 
   return (
     <>
@@ -266,10 +265,11 @@ function App() {
           <div style={{ position: 'relative', width: '60vw', height: '70vh' }}>
             <DatasetUpload onData={setRows} />
             <LayerControls
-              background={background} setBackground={setBackground}
+              showNdvi={showNdvi} setShowNdvi={setShowNdvi}
+              showBurn={showBurn} setShowBurn={setShowBurn}
               months={months} monthIndex={monthIndex} setMonthIndex={setMonthIndex}
-              opacity={opacity} setOpacity={setOpacity}
-              status={error || noDataForMonth}
+              ndviOpacity={ndviOpacity} setNdviOpacity={setNdviOpacity}
+              status={status}
             />
 
             <Map

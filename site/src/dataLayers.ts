@@ -1,8 +1,8 @@
-// Background data layers for the map: NDVI (COG rasters on R2) and fire (GeoJSON on R2).
+// Map data layers: NDVI (COG rasters on R2) and burned-area outlines (MCD64A1 GeoJSON on R2).
 import type { PickingInfo } from '@deck.gl/core'
 import { TileLayer } from '@deck.gl/geo-layers'
 import type { TileLayerPickingInfo } from '@deck.gl/geo-layers'
-import { BitmapLayer, ScatterplotLayer } from '@deck.gl/layers'
+import { BitmapLayer, GeoJsonLayer } from '@deck.gl/layers'
 import type { BitmapLayerPickingInfo } from '@deck.gl/layers'
 import { fromUrl } from 'geotiff'
 import type GeoTIFF from 'geotiff'
@@ -11,7 +11,7 @@ import type GeoTIFF from 'geotiff'
 // e.g. VITE_DATA_URL=/data to test with files in site/public/data/
 export const DATA_URL: string = import.meta.env.VITE_DATA_URL || 'https://data.smoky-creatures.earth'
 export const NDVI_MANIFEST_URL = `${DATA_URL}/ndvi/manifest.json`
-export const FIRE_MANIFEST_URL = `${DATA_URL}/fire/fire_manifest.json`
+export const BURN_MANIFEST_URL = `${DATA_URL}/burn/burn_manifest.json`
 
 const NODATA = -3000
 const SCALE = 0.0001
@@ -27,20 +27,17 @@ export interface NdviManifest {
   files: { date: string; file: string; size_mb: number }[] // date = "2026-06"
 }
 
-export type FireConf = 7 | 8 | 9
-
-export interface FireManifest {
-  variable: 'fire'
-  min_conf: FireConf
+export interface BurnManifest {
+  variable: 'burned_area'
   bounds_lonlat: [number, number, number, number]
-  files: { start: string; end: string; file: string; fire_pixels: number }[] // start = "2026-07-20"
+  files: { month: string; file: string; fires: number; burned_km2: number }[] // month = "2026-07"
 }
 
-export interface FirePoint {
-  position: [number, number]
-  start: string
-  end: string
-  conf: FireConf
+export interface BurnProps {
+  id: number
+  area_km2: number
+  start: string // first burn day in the month, "2026-07-04"
+  end: string // last burn day in the month
 }
 
 type RGB = [number, number, number]
@@ -189,66 +186,49 @@ export function ndviFromPick(info: PickingInfo): number | null {
   return raw === undefined || raw === NODATA ? null : raw * SCALE
 }
 
-// ---------- fire layer ----------
-const FIRE_COLORS: Record<FireConf, RGBA> = {
-  7: [255, 190, 0, 220],
-  8: [255, 110, 0, 230],
-  9: [210, 20, 20, 240],
+// ---------- burned-area layer ----------
+interface BurnFeature {
+  type: 'Feature'
+  geometry: { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown }
+  properties: BurnProps
 }
-export const FIRE_CONF_LABEL: Record<FireConf, string> = { 7: 'low', 8: 'nominal', 9: 'high' }
-
-interface FireFeatureCollection {
+interface BurnCollection {
   type: 'FeatureCollection'
-  features: {
-    geometry: { type: 'Polygon'; coordinates: [number, number][][] }
-    properties: { start: string; end: string; conf: FireConf }
-  }[]
+  features: BurnFeature[]
 }
 
-const fireFileCache = new Map<string, Promise<FirePoint[]>>()
+const burnCache = new Map<string, Promise<BurnCollection>>()
 
-// Load all 8-day fire files for a month and return one point per fire pixel
-export async function loadFirePoints(files: string[]): Promise<FirePoint[]> {
-  const lists = await Promise.all(
-    files.map((f) => {
-      let p = fireFileCache.get(f)
-      if (!p) {
-        p = fetch(`${DATA_URL}/fire/${f}`)
-          .then((r) => {
-            if (!r.ok) throw new Error(`${f}: HTTP ${r.status}`)
-            return r.json() as Promise<FireFeatureCollection>
-          })
-          .then((gj) =>
-            gj.features.map((ft): FirePoint => {
-              const ring = ft.geometry.coordinates[0]
-              return {
-                position: [
-                  (ring[0][0] + ring[1][0] + ring[2][0] + ring[3][0]) / 4,
-                  (ring[0][1] + ring[1][1] + ring[2][1] + ring[3][1]) / 4,
-                ],
-                ...ft.properties,
-              }
-            }),
-          )
-        p.catch(() => fireFileCache.delete(f))
-        fireFileCache.set(f, p)
-      }
-      return p
-    }),
-  )
-  return lists.flat()
+// Load one month of burned-area outlines (cached, so moving the slider back is instant)
+export function loadBurn(file: string): Promise<BurnCollection> {
+  let p = burnCache.get(file)
+  if (!p) {
+    p = fetch(`${DATA_URL}/burn/${file}`).then((r) => {
+      if (!r.ok) throw new Error(`${file}: HTTP ${r.status}`)
+      return r.json() as Promise<BurnCollection>
+    })
+    p.catch(() => burnCache.delete(file))
+    burnCache.set(file, p)
+  }
+  return p
 }
 
-export function makeFireLayer({ points, opacity = 0.9 }: { points: FirePoint[]; opacity?: number }) {
-  return new ScatterplotLayer<FirePoint>({
-    id: 'fire',
-    data: points,
+export const BURN_LINE: RGBA = [200, 20, 20, 235]
+export const BURN_FILL: RGBA = [230, 60, 30, 45]
+
+export function makeBurnLayer({ data, opacity = 1 }: { data: BurnCollection; opacity?: number }) {
+  return new GeoJsonLayer({
+    id: 'burn',
+    data: data as never, // our own GeoJSON types; deck.gl only needs standard GeoJSON
     opacity,
     pickable: true,
-    getPosition: (d) => d.position,
-    getRadius: 500, // ~1 km pixel
-    radiusUnits: 'meters',
-    radiusMinPixels: 1.5, // still visible when zoomed out
-    getFillColor: (d) => FIRE_COLORS[d.conf] ?? FIRE_COLORS[8],
+    stroked: true,
+    filled: true,
+    getFillColor: BURN_FILL,
+    getLineColor: BURN_LINE,
+    getLineWidth: 1.5,
+    lineWidthUnits: 'pixels',
+    autoHighlight: true,
+    highlightColor: [255, 200, 0, 120],
   })
 }
