@@ -1,6 +1,10 @@
-Boundary.zip
+__pycache__
 .env.local
-beaver_data.csv
-stats/NASAdata
-stats_env
-stats_env/*
+prep/web_data/
+prep/analysis_data/
+*.zip
+*.tif
+*.tiff
+*.parquet
+*.gpkg
+*.csv
