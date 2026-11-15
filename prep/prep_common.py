@@ -7,8 +7,8 @@ from pathlib import Path
 
 REGIONS = {  # west, south, east, north (degrees)
     "north_america": (-170.0, 15.0, -50.0, 72.0),
-    "us_canada": (-170.0, 24.0, -52.0, 72.0),        # Alaska to Newfoundland, Florida Keys to the Arctic coast
     "canada": (-141.0, 41.6, -52.6, 72.0),
+    "us_canada": (-170.0, 24.0, -52.0, 72.0),   
     "western_canada": (-139.1, 48.2, -101.9, 70.0),
     "bc": (-139.1, 48.2, -114.0, 60.0),
 }
@@ -21,38 +21,6 @@ PATTERNS = {
     # Burn_Date only (Burn_Date_Uncertainty / QA / First_Day / Last_Day don't match)
     "burn": re.compile(r"MCD64A1[._]061.*Burn_Date_(\d{4})(\d{2})(\d{2})T\d{6}.*\.tiff?$", re.I),
 }
-
-
-def _copy_rank(path):
-    """Prefer 'name.tif' over browser re-downloads like 'name (1).tif'."""
-    return (1 if re.search(r"\(\d+\)\.tiff?$", path.name) else 0, path.name)
-
-
-def _is_synthetic(path):
-    """True for the sample files made for code development (tagged SYNTHETIC=true)."""
-    try:
-        import rasterio
-        with rasterio.open(path) as src:
-            return str(src.tags().get("SYNTHETIC", "")).lower() == "true"
-    except Exception:
-        return False
-
-
-def parse_months(spec):
-    """'4-10' -> {4,...,10};  '4,5,6' -> {4,5,6};  '11-2' wraps over new year;  None/'' -> None (all)."""
-    if not spec:
-        return None
-    months = set()
-    for part in str(spec).replace(" ", "").split(","):
-        if "-" in part:
-            a, b = (int(x) for x in part.split("-"))
-            months |= set(range(a, b + 1)) if a <= b else set(range(a, 13)) | set(range(1, b + 1))
-        else:
-            months.add(int(part))
-    bad = [m for m in months if not 1 <= m <= 12]
-    if bad:
-        raise SystemExit(f"--months: invalid month(s) {bad}; use 1-12, e.g. 4-10 or 4,5,6")
-    return months
 
 
 def find_files(inputs, kind, months=None):

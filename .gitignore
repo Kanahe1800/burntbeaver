@@ -1,5 +1,7 @@
 __pycache__
 .env.local
+NASAdata
+web_data
 prep/web_data/
 prep/analysis_data/
 *.zip
