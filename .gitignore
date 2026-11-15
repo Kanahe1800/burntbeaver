@@ -1,7 +1,11 @@
-Boundary.zip
-.env.local
-beaver_data.csv
-NASAdata
-web_data
 __pycache__
+.env.local
+prep/web_data/
+prep/analysis_data/
+*.zip
+*.tif
+*.tiff
+*.parquet
+*.gpkg
+*.csv
 .vscode

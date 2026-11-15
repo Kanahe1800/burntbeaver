@@ -1,0 +1,100 @@
+{
+  "variable": "NDVI",
+  "source": "MODIS MOD13A3 v061, 1 km monthly",
+  "crs": "EPSG:3857",
+  "tiling": "GoogleMapsCompatible",
+  "bounds_lonlat": [
+    -171.5625,
+    13.923404,
+    -47.8125,
+    72.395706
+  ],
+  "max_zoom": 7,
+  "tile_size": 256,
+  "dtype": "int16",
+  "scale": 0.0001,
+  "nodata": -3000,
+  "valid_range": [
+    -2000,
+    10000
+  ],
+  "files": [
+    {
+      "date": "2026-04",
+      "file": "ndvi_2026_04.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20260401T000000_aid0001.tif",
+      "size_mb": 76.8,
+      "stats": {
+        "min": -0.169,
+        "max": 0.9007,
+        "mean": 0.1712
+      }
+    },
+    {
+      "date": "2026-05",
+      "file": "ndvi_2026_05.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20260501T000000_aid0001.tif",
+      "size_mb": 81.5,
+      "stats": {
+        "min": -0.1977,
+        "max": 0.9015,
+        "mean": 0.3475
+      }
+    },
+    {
+      "date": "2026-06",
+      "file": "ndvi_2026_06.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20260601T000000_aid0001.tif",
+      "size_mb": 84.0,
+      "stats": {
+        "min": -0.1977,
+        "max": 0.9293,
+        "mean": 0.5266
+      }
+    },
+    {
+      "date": "2026-07",
+      "file": "ndvi_2026_07.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20260701T000000_aid0001.tif",
+      "size_mb": 82.6,
+      "stats": {
+        "min": -0.1872,
+        "max": 0.936,
+        "mean": 0.5872
+      }
+    },
+    {
+      "date": "2026-08",
+      "file": "ndvi_2026_08.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20260801T000000_aid0001.tif",
+      "size_mb": 82.5,
+      "stats": {
+        "min": -0.1913,
+        "max": 0.9487,
+        "mean": 0.5807
+      }
+    },
+    {
+      "date": "2026-09",
+      "file": "ndvi_2026_09.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20260901T000000_aid0001.tif",
+      "size_mb": 82.8,
+      "stats": {
+        "min": -0.1798,
+        "max": 0.9873,
+        "mean": 0.526
+      }
+    },
+    {
+      "date": "2026-10",
+      "file": "ndvi_2026_10.tif",
+      "source": "MOD13A3.061__1_km_monthly_NDVI_20261001T000000_aid0001.tif",
+      "size_mb": 83.3,
+      "stats": {
+        "min": -0.2,
+        "max": 0.9094,
+        "mean": 0.3613
+      }
+    }
+  ]
+}
