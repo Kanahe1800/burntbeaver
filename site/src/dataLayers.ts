@@ -12,6 +12,9 @@ import type GeoTIFF from 'geotiff'
 export const DATA_URL: string = import.meta.env.VITE_DATA_URL || 'https://data.smoky-creatures.earth'
 export const NDVI_MANIFEST_URL = `${DATA_URL}/ndvi/manifest.json`
 export const BURN_MANIFEST_URL = `${DATA_URL}/burn/burn_manifest.json`
+export const STATS_GRID = '25km'                                             // grid used for the in-browser statistics
+export const SEASON_URL = `${DATA_URL}/grid/${STATS_GRID}/season.json`       // from prep_web_stats.py
+export const DEFAULT_POINTS_URL = `${DATA_URL}/grid/${STATS_GRID}/beaver_points.json`
 
 const NODATA = -3000
 const SCALE = 0.0001
@@ -232,3 +235,13 @@ export function makeBurnLayer({ data, opacity = 1 }: { data: BurnCollection; opa
     highlightColor: [255, 200, 0, 120],
   })
 }
+
+// ---------- statistics data ----------
+async function getJson<T>(url: string): Promise<T> {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`)
+  return r.json() as Promise<T>
+}
+
+export const loadSeason = () => getJson<import('./statsLib').SeasonData>(SEASON_URL)
+export const loadDefaultPoints = () => getJson<import('./statsLib').Points>(DEFAULT_POINTS_URL)

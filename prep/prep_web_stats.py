@@ -42,7 +42,11 @@ def main():
     g = Path(a.grid)
     meta = json.loads((g / "meta.json").read_text())
     cells = pd.read_parquet(g / "cells.parquet")
-    cells = cells[cells["land_frac"] >= MIN_LAND].sort_values("cell_id").reset_index(drop=True)
+    cells = cells[cells["land_frac"] >= MIN_LAND]
+    bad = ~(np.isfinite(cells["lat"]) & np.isfinite(cells["lon"]))   # e.g. cells near the pole with no valid lat/lon
+    if bad.any():
+        print(f"dropping {int(bad.sum())} areas without a valid lat/lon")
+    cells = cells[~bad].sort_values("cell_id").reset_index(drop=True)
     ids = cells["cell_id"].values
 
     burn_months = meta["burn_months"]
@@ -78,7 +82,7 @@ def main():
     }
     od = Path(a.out) / g.name
     od.mkdir(parents=True, exist_ok=True)
-    (od / "season.json").write_text(json.dumps(out, separators=(",", ":")))
+    (od / "season.json").write_text(json.dumps(out, separators=(",", ":"), allow_nan=False))  # NaN is not valid JSON
     print(f"{od / 'season.json'}: {len(ids):,} areas, burn {years_b[0]}-{years_b[-1]}, NDVI {years_n[0]}-{years_n[-1]}, "
           f"{(od / 'season.json').stat().st_size / 1e6:.1f} MB")
 
@@ -90,7 +94,7 @@ def main():
         pts = pts.dropna(subset=[lat, lon])
         po = {"name": a.animal, "lat": pts[lat].round(4).tolist(), "lon": pts[lon].round(4).tolist(),
               "year": pts[yr].fillna(0).astype(int).tolist() if yr else []}
-        (od / f"{a.animal}_points.json").write_text(json.dumps(po, separators=(",", ":")))
+        (od / f"{a.animal}_points.json").write_text(json.dumps(po, separators=(",", ":"), allow_nan=False))
         print(f"{od / f'{a.animal}_points.json'}: {len(pts):,} records, "
               f"{(od / f'{a.animal}_points.json').stat().st_size / 1e6:.1f} MB")
 
