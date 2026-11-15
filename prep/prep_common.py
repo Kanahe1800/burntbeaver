@@ -7,6 +7,7 @@ from pathlib import Path
 
 REGIONS = {  # west, south, east, north (degrees)
     "north_america": (-170.0, 15.0, -50.0, 72.0),
+    "us_canada": (-170.0, 24.0, -52.0, 72.0),        # Alaska to Newfoundland, Florida Keys to the Arctic coast
     "canada": (-141.0, 41.6, -52.6, 72.0),
     "western_canada": (-139.1, 48.2, -101.9, 70.0),
     "bc": (-139.1, 48.2, -114.0, 60.0),
@@ -22,10 +23,28 @@ PATTERNS = {
 }
 
 
-def find_files(inputs, kind):
+def parse_months(spec):
+    """'4-10' -> {4,...,10};  '4,5,6' -> {4,5,6};  '11-2' wraps over new year;  None/'' -> None (all)."""
+    if not spec:
+        return None
+    months = set()
+    for part in str(spec).replace(" ", "").split(","):
+        if "-" in part:
+            a, b = (int(x) for x in part.split("-"))
+            months |= set(range(a, b + 1)) if a <= b else set(range(a, 13)) | set(range(1, b + 1))
+        else:
+            months.add(int(part))
+    bad = [m for m in months if not 1 <= m <= 12]
+    if bad:
+        raise SystemExit(f"--months: invalid month(s) {bad}; use 1-12, e.g. 4-10 or 4,5,6")
+    return months
+
+
+def find_files(inputs, kind, months=None):
     """Return [(path, date)] for every file matching `kind` in the given files/folders.
 
     Folders are searched recursively; files that don't match the naming pattern are skipped.
+    `months`: set of month numbers to keep (e.g. {4,...,10}); None keeps all.
     """
     pattern = PATTERNS[kind]
     candidates = []
@@ -38,14 +57,20 @@ def find_files(inputs, kind):
             print(f"  ! not found: {p}")
 
     found = {}
+    skipped_months = 0
     for f in candidates:
         m = pattern.search(f.name)
         if m:
             date = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            if months is not None and date.month not in months:
+                skipped_months += 1
+                continue
             if date in found:
                 print(f"  ! duplicate date {date}: using {found[date].name}, skipping {f.name}")
                 continue
             found[date] = f
+    if skipped_months:
+        print(f"  ({skipped_months} {kind} file(s) outside the selected months ignored)")
     return sorted(((path, date) for date, path in found.items()), key=lambda x: x[1])
 
 
@@ -87,3 +112,5 @@ def add_common_args(ap, default_out):
                     help="custom lon/lat box; overrides --region")
     ap.add_argument("--overwrite", action="store_true",
                     help="reprocess files whose output already exists (default: skip them)")
+    ap.add_argument("--months", type=parse_months, default=None,
+                    help="only process these months, e.g. 4-10 (April-October) or 5,6,7 (default: all)")
